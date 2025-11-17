@@ -1,0 +1,206 @@
+{
+  "name": "SEO Article Generator - Healthy Gut AI",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 250]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "sheetId": "",
+        "range": "Sheet1!A:C",
+        "options": {}
+      },
+      "name": "Google Sheets - Topics (optional)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [450, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build prompt variables\nconst row = items[0].json;\nconst topic = row.topic || 'Irritable Bowel Syndrome (IBS)';\nconst keyword = row.keyword || 'IBS symptoms';\nconst type = row.type || 'pillar';\nconst length = type === 'pillar' ? 2800 : 1200;\nconst slug = topic.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');\nconst prompt1 = `You are an evidence-based medical content writer. Write a detailed ${length} word SEO ${type} article on \"${topic}\". Primary keyword: \"${keyword}\". Requirements: H1 must include the keyword. Meta description 150-160 chars. Keyword density 0.8-1.2% (include keyword in first 100 words). Use H2/H3, bullets, at least one comparison table, diet guidance, \"When to see a doctor\" section, FAQs (5-8), 2 CTA variants, and include inline citations (NIH, NHS, CDC). End with a short \"How Healthy Gut AI helps\" paragraph. Maintain readability grade 7-9.`;\nconst prompt2 = `Rewrite the above output for GEO: India. Optimize for AI answer engines: include snippet-ready answers under question headings, and make sections AI-citable. Preserve citations.`;\n\nitems[0].json = { topic, keyword, type, length, slug, prompt1, prompt2 };\nreturn items;"
+      },
+      "name": "Build Prompts",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "={{ $json.LLM_ENDPOINT || 'https://api.example-llm.com/v1/generate' }}",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "prompt",
+              "value": "={{ $json.prompt1 }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 4000
+            }
+          ]
+        }
+      },
+      "name": "LLM - Prompt 1 (Pillar)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [900, 120]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "={{ $json.LLM_ENDPOINT || 'https://api.example-llm.com/v1/generate' }}",
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "prompt",
+              "value": "={{ $json.prompt2 + '\\n\\nUse the previously generated article as input. Rewrite for GEO: India and include snippet-style Q&A sections.' }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2000
+            }
+          ]
+        }
+      },
+      "name": "LLM - Prompt 2 (GEO Rewrite)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [900, 320]
+    },
+    {
+      "parameters": {
+        "functionCode": "// QA checks: keyword density, meta length, first 100 words\nconst article = $items('LLM - Prompt 1 (Pillar)')[0].json.text || items[0].json.text || '';\nconst keyword = items[0].json.keyword || 'keyword';\nconst words = article.split(/\\s+/).filter(w=>w.length>0).length;\nconst occ = (article.match(new RegExp(keyword,'gi'))||[]).length;\nconst density = (occ/words)*100;\nconst first100 = article.split(/\\s+/).slice(0,100).join(' ');\nconst metaMatch = article.match(/Meta description:([\\s\\S]{0,300})/i);\nconst meta = metaMatch ? metaMatch[1].trim() : '';\nitems[0].json.qa = { words, occ, density: Number(density.toFixed(2)), hasKeywordInFirst100: (new RegExp(keyword,'i').test(first100)), metaLength: meta.length };\nreturn items;"
+      },
+      "name": "QA Checks",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1150, 220]
+    },
+    {
+      "parameters": {
+        "functionCode": "const slug = items[0].json.slug || 'article';\nconst articleText = $items('LLM - Prompt 2 (GEO Rewrite)')[0].json.text || '';\nconst meta = items[0].json.meta || { title: items[0].json.topic, description: '' };\nconst schema = {\n  \"@context\": \"https://schema.org\",\n  \"@type\": \"Article\",\n  \"headline\": meta.title,\n  \"description\": meta.description || articleText.slice(0,160),\n  \"author\": { \"@type\":\"Organization\",\"name\":\"Healthy Gut AI\" },\n  \"datePublished\": new Date().toISOString(),\n  \"mainEntityOfPage\": { \"@type\": \"WebPage\", \"@id\": `https://example.com/${slug}` }\n};\nitems[0].json.output = { markdown: articleText, meta, schema };\nreturn items;"
+      },
+      "name": "Format Output",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1400, 220]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "path": "articles/{{ $json.slug }}",
+        "options": {}
+      },
+      "name": "Save to GitHub (placeholder)",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [1650, 220]
+    },
+    {
+      "parameters": {
+        "text": "Article generation finished. QA:={{$json.qa | json}}",
+        "options": {}
+      },
+      "name": "Notify (Email/Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1850, 220]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Topics (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Topics (optional)": {
+      "main": [
+        [
+          {
+            "node": "Build Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompts": {
+      "main": [
+        [
+          {
+            "node": "LLM - Prompt 1 (Pillar)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LLM - Prompt 2 (GEO Rewrite)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Prompt 1 (Pillar)": {
+      "main": [
+        [
+          {
+            "node": "QA Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Prompt 2 (GEO Rewrite)": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA Checks": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Save to GitHub (placeholder)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify (Email/Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
